@@ -49,7 +49,6 @@ import yaml
 import os
 import numpy as np
 from seg_nrrd_to_pngs import SegNrrdCoalescer
-import matplotlib.pyplot as plt
 from volume_data_to_slices import *
 
 class NrrdGeometricData:
