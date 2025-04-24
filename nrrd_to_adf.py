@@ -80,7 +80,7 @@ class NrrdGeometricData:
         if self.coordinate_representation.lower() != 'left-posterior-superior':
             print("INFO! NRRD NOT USING LPS CONVENTION")
         
-        rotation_offset = Rotation.from_euler('xyz', [0., 0., 0.], degrees=True)
+        rotation_offset = Rotation.from_euler('xyz', [0., 0., 180.], degrees=True)
         if self.coordinate_representation.lower() == 'right-anterior-superior':
             # Perform 180 degree rotation
             rotation_offset = Rotation.from_euler('xyz', [0., 0., 180.], degrees=True)
@@ -120,7 +120,7 @@ class ADFData:
         self.set_volume_name(os.path.basename(nrrd_filepath).split('.')[0])
 
     def set_volume_name(self, name):
-        self.volume_data["name"] = name
+        self.volume_data["name"] = self.get_valid_ros_name(name)
 
     def set_volume_geometric_attributes(self, geometric_data: NrrdGeometricData):
         g = geometric_data
@@ -143,9 +143,10 @@ class ADFData:
         self.volume_data["shaders"]["path"] = basepath
         self.volume_data["shaders"]["vertex"] = vs_filepath
         self.volume_data["shaders"]["fragment"] = fs_filepath
+
     def set_parent_body_name_attribute(self, name):
-        self.parent_body_data["name"] = name
-        self.volume_data["parent"] = "BODY " + self.parent_body_data["name"]
+        self.parent_body_data["name"] = self.get_valid_ros_name(name)
+        self.volume_data["parent"] = "BODY " + self.get_valid_ros_name(self.parent_body_data["name"])
     
     def set_parent_body_geometric_attributes(self, position, orientation):
         self.set_location_attributes(self.parent_body_data, position, orientation)
@@ -187,6 +188,14 @@ class ADFData:
         yaml_data["location"]["orientation"]["r"] = float(orientation[0])
         yaml_data["location"]["orientation"]["p"] = float(orientation[1])
         yaml_data["location"]["orientation"]["y"] = float(orientation[2])
+
+    @staticmethod
+    def get_valid_ros_name(a_str: str):
+        print('Provided Name: ', a_str)
+        valid_str = a_str.replace('-', '_')
+        valid_str = valid_str.replace('.', '_')
+        print('Cleaned name:', valid_str)
+        return valid_str
 
 
 def represent_dictionary_order(self, dict_data):
