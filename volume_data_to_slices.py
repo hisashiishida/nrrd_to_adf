@@ -42,6 +42,7 @@
 # //==============================================================================
 import matplotlib.pyplot as plt
 import os
+import numpy as np
 
 def normalize_data(data):
 	max = data.max()
@@ -62,4 +63,9 @@ def save_volume_data_as_slices(data, folder, prefix, colormap):
             if data is not None:
                 for i in range(data.shape[2]):
                     im_name = folder + '/' + prefix + str(i) + '.png'
-                    plt.imsave(im_name, data[:, :, i], cmap=colormap)
+                    im_data = data[:, :, i]
+                    print("Before", im_data.shape)
+                    im_data = np.rot90(im_data) # For AMBF we need this CCW 90 degree rotation
+
+                    print("After", im_data.shape)
+                    plt.imsave(im_name, im_data, cmap=colormap)

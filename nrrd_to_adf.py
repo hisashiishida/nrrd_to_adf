@@ -63,7 +63,6 @@ class NrrdGeometricData:
         self.units_scale = 0.001 # NRRD is commonly in mm, convert to SI
 
     def load(self, nrrd_hdr):
-        self.origin = nrrd_hdr['space origin']
         space_directions = nrrd_hdr['space directions']
         if space_directions.shape[0] == 4: # Segmented NRRD, take the last three rows
             space_directions = space_directions[1:4, :]
@@ -80,15 +79,18 @@ class NrrdGeometricData:
         if self.coordinate_representation.lower() != 'left-posterior-superior':
             print("INFO! NRRD NOT USING LPS CONVENTION")
         
-        rotation_offset = Rotation.from_euler('xyz', [0., 0., 180.], degrees=True)
+        rotation_offset = Rotation.from_euler('xyz', [0., 0., 0.], degrees=True)
         if self.coordinate_representation.lower() == 'right-anterior-superior':
             # Perform 180 degree rotation
             rotation_offset = Rotation.from_euler('xyz', [0., 0., 180.], degrees=True)
         # Add others
         
-        U, _, Vt = np.linalg.svd(space_directions)
+        U, _, Vt = np.linalg.svd(space_directions.T)
         self.orientation_mat = rotation_offset.as_matrix() @ (U @ Vt)
         self.orientation_rpy = Rotation.from_matrix(self.orientation_mat).as_euler('xyz', degrees=False) #lower case 'xyz' is extrinsic, uppercase 'XYZ' is instrinsic
+        
+        self.origin = nrrd_hdr['space origin']
+        self.origin = rotation_offset.as_matrix() @ self.origin
     
 
 class ADFData:
