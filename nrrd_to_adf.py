@@ -55,6 +55,7 @@ class NrrdGeometricData:
     def __init__(self):
         self.origin = []
         self.orientation_rpy = []
+        self.orientation_mat = None
         self.resolution = []
         self.dimensions = []
         self.sizes = []
@@ -79,15 +80,15 @@ class NrrdGeometricData:
         if self.coordinate_representation.lower() != 'left-posterior-superior':
             print("INFO! NRRD NOT USING LPS CONVENTION")
         
-        rotation_offset = Rotation.from_euler('ZYX', [0., 0., 0.], degrees=True)
+        rotation_offset = Rotation.from_euler('xyz', [0., 0., 0.], degrees=True)
         if self.coordinate_representation.lower() == 'right-anterior-superior':
             # Perform 180 degree rotation
-            rotation_offset = Rotation.from_euler('ZYX', [180., 0., 0.], degrees=True)
+            rotation_offset = Rotation.from_euler('xyz', [0., 0., 180.], degrees=True)
         # Add others
         
         U, _, Vt = np.linalg.svd(space_directions)
-        orientation_mat = U @ Vt @ rotation_offset.as_matrix()
-        self.orientation_rpy = Rotation.from_matrix(orientation_mat).as_euler('ZYX', degrees=False) #intrinsic ZYX == extrinsic XYZ
+        self.orientation_mat = rotation_offset.as_matrix() @ (U @ Vt)
+        self.orientation_rpy = Rotation.from_matrix(self.orientation_mat).as_euler('xyz', degrees=False) #lower case 'xyz' is extrinsic, uppercase 'XYZ' is instrinsic
     
 
 class ADFData:
@@ -122,9 +123,10 @@ class ADFData:
         self.volume_data["name"] = name
 
     def set_volume_geometric_attributes(self, geometric_data: NrrdGeometricData):
-        origin = geometric_data.origin * geometric_data.units_scale
-        dimensions = geometric_data.dimensions * geometric_data.units_scale
-        self.set_location_attributes(self.volume_data, origin, geometric_data.orientation_rpy)
+        g = geometric_data
+        origin = (g.origin + (g.orientation_mat @ (g.dimensions * 0.5))) * g.units_scale # AMBF takes middle as origin, so add rotated half dimensional offset
+        dimensions = g.dimensions * g.units_scale
+        self.set_location_attributes(self.volume_data, origin, g.orientation_rpy)
 
         self.volume_data["dimensions"]["x"] = float(dimensions[0])
         self.volume_data["dimensions"]["y"] = float(dimensions[1])

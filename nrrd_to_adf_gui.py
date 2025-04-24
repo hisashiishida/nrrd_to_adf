@@ -88,11 +88,16 @@ class NRRD2ADFConverterGUI(QWidget):
         self.load_nrrd_button.clicked.connect(self.load_nrrd_cb)
         self.load_nrrd_button.setEnabled(False)
         load_nrrd_layout.addWidget(self.load_nrrd_button, 2, 0, 1, 4)
+
+        self.load_hdr_button = QPushButton("Load Header Only", self)
+        self.load_hdr_button.clicked.connect(self.load_hdr_cb)
+        self.load_hdr_button.setEnabled(False)
+        load_nrrd_layout.addWidget(self.load_hdr_button, 3, 0, 1, 4)
         
         self.show_slices_button = QPushButton("Show Slices", self)
         self.show_slices_button.clicked.connect(self.show_slices_cb)
         self.show_slices_button.setEnabled(False)
-        load_nrrd_layout.addWidget(self.show_slices_button, 3, 0, 1, 4)
+        load_nrrd_layout.addWidget(self.show_slices_button, 4, 0, 1, 4)
 
         layout.addLayout(load_nrrd_layout, 0, 0)
 
@@ -320,7 +325,7 @@ class NRRD2ADFConverterGUI(QWidget):
         if nrrd_filepath:
             self.nrrd_filepath.setText(nrrd_filepath)
             self.load_nrrd_button.setEnabled(True)
-
+            self.load_hdr_button.setEnabled(True)
 
     def load_nrrd_cb(self):
         if self.nrrd_filepath.text():
@@ -338,6 +343,12 @@ class NRRD2ADFConverterGUI(QWidget):
             self.current_slice = [self.nrrd_data.shape[0] // 2, self.nrrd_data.shape[1] // 2, self.nrrd_data.shape[2] // 2]
             # print("NRRD Metadata:", self.nrrd_header)
             # self.show_slices()
+
+    def load_hdr_cb(self):
+        if self.nrrd_filepath.text():
+            self.nrrd_data, self.nrrd_header = nrrd.read(self.nrrd_filepath.text())
+            self.nrrd_geometric_data.load(self.nrrd_header)
+            self._set_layout_from_nrrd_geometric_data(self.nrrd_geometric_data)
 
     def show_slices_cb(self):
         if self.nrrd_data is not None:
@@ -427,7 +438,6 @@ class NRRD2ADFConverterGUI(QWidget):
 
     def select_adf_filepath_cb(self):
         options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
         file_path, _ = QFileDialog.getSaveFileName(self, "Select or Create ADF File", "", "YAML Files (*.yaml)", options=options)
         if file_path:
             self.adf_filepath.setText(file_path)
