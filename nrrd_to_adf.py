@@ -55,6 +55,7 @@ class NrrdGeometricData:
     def __init__(self):
         self.origin = []
         self.orientation_rpy = []
+        self.orientation_mat = None
         self.resolution = []
         self.dimensions = []
         self.sizes = []
@@ -62,7 +63,6 @@ class NrrdGeometricData:
         self.units_scale = 0.001 # NRRD is commonly in mm, convert to SI
 
     def load(self, nrrd_hdr):
-        self.origin = nrrd_hdr['space origin']
         space_directions = nrrd_hdr['space directions']
         if space_directions.shape[0] == 4: # Segmented NRRD, take the last three rows
             space_directions = space_directions[1:4, :]
@@ -79,15 +79,18 @@ class NrrdGeometricData:
         if self.coordinate_representation.lower() != 'left-posterior-superior':
             print("INFO! NRRD NOT USING LPS CONVENTION")
         
-        rotation_offset = Rotation.from_euler('ZYX', [0., 0., 0.], degrees=True)
+        rotation_offset = Rotation.from_euler('xyz', [0., 0., 0.], degrees=True)
         if self.coordinate_representation.lower() == 'right-anterior-superior':
             # Perform 180 degree rotation
-            rotation_offset = Rotation.from_euler('ZYX', [180., 0., 0.], degrees=True)
+            rotation_offset = Rotation.from_euler('xyz', [0., 0., 180.], degrees=True)
         # Add others
         
-        U, _, Vt = np.linalg.svd(space_directions)
-        orientation_mat = U @ Vt @ rotation_offset.as_matrix()
-        self.orientation_rpy = Rotation.from_matrix(orientation_mat).as_euler('ZYX', degrees=False) #intrinsic ZYX == extrinsic XYZ
+        U, _, Vt = np.linalg.svd(space_directions.T)
+        self.orientation_mat = rotation_offset.as_matrix() @ (U @ Vt)
+        self.orientation_rpy = Rotation.from_matrix(self.orientation_mat).as_euler('xyz', degrees=False) #lower case 'xyz' is extrinsic, uppercase 'XYZ' is instrinsic
+        
+        self.origin = nrrd_hdr['space origin']
+        self.origin = rotation_offset.as_matrix() @ self.origin
     
 
 class ADFData:
@@ -119,12 +122,13 @@ class ADFData:
         self.set_volume_name(os.path.basename(nrrd_filepath).split('.')[0])
 
     def set_volume_name(self, name):
-        self.volume_data["name"] = name
+        self.volume_data["name"] = self.get_valid_ros_name(name)
 
     def set_volume_geometric_attributes(self, geometric_data: NrrdGeometricData):
-        origin = geometric_data.origin * geometric_data.units_scale
-        dimensions = geometric_data.dimensions * geometric_data.units_scale
-        self.set_location_attributes(self.volume_data, origin, geometric_data.orientation_rpy)
+        g = geometric_data
+        origin = (g.origin + (g.orientation_mat @ (g.dimensions * 0.5))) * g.units_scale # AMBF takes middle as origin, so add rotated half dimensional offset
+        dimensions = g.dimensions * g.units_scale
+        self.set_location_attributes(self.volume_data, origin, g.orientation_rpy)
 
         self.volume_data["dimensions"]["x"] = float(dimensions[0])
         self.volume_data["dimensions"]["y"] = float(dimensions[1])
@@ -141,9 +145,10 @@ class ADFData:
         self.volume_data["shaders"]["path"] = basepath
         self.volume_data["shaders"]["vertex"] = vs_filepath
         self.volume_data["shaders"]["fragment"] = fs_filepath
+
     def set_parent_body_name_attribute(self, name):
-        self.parent_body_data["name"] = name
-        self.volume_data["parent"] = "BODY " + self.parent_body_data["name"]
+        self.parent_body_data["name"] = self.get_valid_ros_name(name)
+        self.volume_data["parent"] = "BODY " + self.get_valid_ros_name(self.parent_body_data["name"])
     
     def set_parent_body_geometric_attributes(self, position, orientation):
         self.set_location_attributes(self.parent_body_data, position, orientation)
@@ -185,6 +190,12 @@ class ADFData:
         yaml_data["location"]["orientation"]["r"] = float(orientation[0])
         yaml_data["location"]["orientation"]["p"] = float(orientation[1])
         yaml_data["location"]["orientation"]["y"] = float(orientation[2])
+
+    @staticmethod
+    def get_valid_ros_name(a_str: str):
+        valid_str = a_str.replace('-', '_')
+        valid_str = valid_str.replace('.', '_')
+        return valid_str
 
 
 def represent_dictionary_order(self, dict_data):
@@ -244,6 +255,16 @@ def main():
                             parsed_args.nrrd_file,
                             rel_slices_path,
                             parsed_args.slices_prefix)
+    
+    if len(nrrd_data.shape) == 4:
+        seg_infos = SegNrrdCoalescer.get_segments_infos(nrrd_hdr)
+        adf_data.meta_data["segments"] = OrderedDict()
+        for seg_info in seg_infos:
+            adf_data.meta_data["segments"][seg_info.index] = {"name": seg_info.name,
+                                                              "color": seg_info.color.as_dict(),
+                                                              "label": seg_info.label,
+                                                              "index": seg_info.index}
+
     adf_data.save(parsed_args.adf_filepath)
     print("Exiting")
     
