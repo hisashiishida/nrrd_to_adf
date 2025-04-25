@@ -260,7 +260,10 @@ def main():
         seg_infos = SegNrrdCoalescer.get_segments_infos(nrrd_hdr)
         adf_data.meta_data["segments"] = OrderedDict()
         for seg_info in seg_infos:
-            adf_data.meta_data["segments"][seg_info.index] = {"name": seg_info.name, "color": seg_info.color.as_dict()}
+            adf_data.meta_data["segments"][seg_info.index] = {"name": seg_info.name,
+                                                              "color": seg_info.color.as_dict(),
+                                                              "label": seg_info.label,
+                                                              "index": seg_info.index}
 
     adf_data.save(parsed_args.adf_filepath)
     print("Exiting")
