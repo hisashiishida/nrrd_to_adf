@@ -59,7 +59,7 @@ def save_volume_data_as_slices(data, folder, prefix, colormap):
         if folder:
             print("INFO! Slices path provided as: ", folder)
             if not os.path.exists(folder):
-                os.mkdir(folder)
+                os.makedirs(folder)
             if data is not None:
                 for i in range(data.shape[2]):
                     im_name = folder + '/' + prefix + str(i) + '.png'
