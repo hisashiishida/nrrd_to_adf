@@ -63,8 +63,8 @@ def save_volume_data_as_slices(data, folder, prefix, colormap):
             if data is not None:
                 for i in range(data.shape[2]):
                     im_name = folder + '/' + prefix + str(i) + '.png'
-                    im_data = data[:, :, i]
+                    im_data = np.rot90(data[:, :, i], k=1) # For AMBF we need this CCW 90 degree rotation
                     # print("Before", im_data.shape)
-                    im_data = np.rot90(im_data) # For AMBF we need this CCW 90 degree rotation
+                    im_data = np.ascontiguousarray(im_data) 
                     # print("After", im_data.shape)
                     plt.imsave(im_name, im_data, cmap=colormap)
