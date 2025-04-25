@@ -193,10 +193,8 @@ class ADFData:
 
     @staticmethod
     def get_valid_ros_name(a_str: str):
-        print('Provided Name: ', a_str)
         valid_str = a_str.replace('-', '_')
         valid_str = valid_str.replace('.', '_')
-        print('Cleaned name:', valid_str)
         return valid_str
 
 
@@ -257,6 +255,13 @@ def main():
                             parsed_args.nrrd_file,
                             rel_slices_path,
                             parsed_args.slices_prefix)
+    
+    if len(nrrd_data.shape) == 4:
+        seg_infos = SegNrrdCoalescer.get_segments_infos(nrrd_hdr)
+        adf_data.meta_data["segments"] = OrderedDict()
+        for seg_info in seg_infos:
+            adf_data.meta_data["segments"][seg_info.index] = {"name": seg_info.name, "color": seg_info.color.as_dict()}
+
     adf_data.save(parsed_args.adf_filepath)
     print("Exiting")
     

@@ -48,6 +48,7 @@ from pathlib import Path
 from shutil import rmtree
 import time
 from volume_data_to_slices import *
+from collections import OrderedDict
 
 
 class RGBA:
@@ -69,7 +70,13 @@ class RGBA:
         return string
     
     def as_list(self):
-        return [self.R, self.G, self.B, self.A]
+        return [float(self.R), float(self.G), float(self.B), float(self.A)]
+    
+    def as_dict(self):
+        rgba = self.as_list()
+        rgba_dict = OrderedDict()
+        rgba_dict = {"r": rgba[0], "g": rgba[1], "b": rgba[2], "a": rgba[3]}
+        return rgba_dict
     
 
 
@@ -139,10 +146,12 @@ class SegNrrdCoalescer:
             # Throw some error or warning
             pass
 
-    def _initialize_segments_infos(self, nrrd_hdr):
-        self.num_segments = self.find_number_of_segments(nrrd_hdr)
-        for i in range(self.num_segments):
-            self._segments_infos.append(SegmentInfo())
+    @staticmethod
+    def get_segments_infos(nrrd_hdr):
+        num_segments = SegNrrdCoalescer.find_number_of_segments(nrrd_hdr)
+        segments_infos = []
+        for i in range(num_segments):
+            segments_infos.append(SegmentInfo())
 
         for k, i in nrrd_hdr.items():
             key_str = '_ID'
@@ -170,7 +179,8 @@ class SegNrrdCoalescer:
                 color_data_str = nrrd_hdr[color_str]
                 color_data = np.fromstring(color_data_str, dtype=float, sep=' ')
 
-                self._segments_infos[idx].fill(idx, name, layer, label, color_data)
+                segments_infos[idx].fill(idx, name, layer, label, color_data)
+        return segments_infos
 
     def print_segments_infos(self):
         for i in range(self.num_segments):
@@ -180,7 +190,7 @@ class SegNrrdCoalescer:
 
     def _coalesce_segments_into_3D_data(self):
         self._initialize_coalesced_data()
-        self._initialize_segments_infos(self.nrrd_hdr)
+        self._segments_infos = SegNrrdCoalescer.get_segments_infos(self.nrrd_hdr)
         if self.num_channels == 4:
             start_time = time.time()
             for seg_info in self._segments_infos:
