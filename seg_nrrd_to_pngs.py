@@ -122,12 +122,16 @@ class SegNrrdCoalescer:
 
     def set_nrrd(self, hdr, data):
         self.nrrd_hdr = hdr
-        self.nrrd_data = data[:, ::self.x_dim_ratio, ::self.y_dim_ratio, ::self.z_dim_ratio]
+
+        if (data.ndim == 4):
+            self.nrrd_data = data[:, ::self.x_dim_ratio, ::self.y_dim_ratio, ::self.z_dim_ratio]
+        elif(data.ndim ==3):
+            self.nrrd_data = data[None, ::self.x_dim_ratio, ::self.y_dim_ratio, ::self.z_dim_ratio ]
+
 
     def _initialize_coalesced_data(self):
         # Create a 3D block where the first index refers to individual images,
         # The second index refers to x_dim, the third to y_dim and the fourth to z_dim(e.g. Z)
-
         self.num_layers = self.nrrd_data.shape[0]
         self.x_dim = self.nrrd_data.shape[1]
         self.y_dim = self.nrrd_data.shape[2]
