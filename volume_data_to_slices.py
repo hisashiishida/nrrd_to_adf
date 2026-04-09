@@ -67,4 +67,5 @@ def save_volume_data_as_slices(data, folder, prefix, colormap):
                     # print("Before", im_data.shape)
                     im_data = np.ascontiguousarray(im_data) # To avoid the bug in imsave in matplotlib imsave (https://stackoverflow.com/questions/78269316/matplotlib-imsave-error-ndarray-is-not-c-contiguous-but-it-is)
                     # print("After", im_data.shape)
+                    im_data = np.round(im_data * 255).astype(np.uint8) # Scale to 0-255 and convert to uint8
                     plt.imsave(im_name, im_data, cmap=colormap)
