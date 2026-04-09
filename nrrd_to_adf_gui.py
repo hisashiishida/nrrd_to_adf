@@ -50,6 +50,7 @@ from PyQt5.QtCore import Qt
 from seg_nrrd_to_pngs import SegmentInfo, SegNrrdCoalescer
 from nrrd_to_adf import *
 from volume_data_to_slices import save_volume_data_as_slices
+import json
 
 
 class NRRD2ADFConverterGUI(QWidget):
@@ -66,6 +67,8 @@ class NRRD2ADFConverterGUI(QWidget):
         self.sub_layout_vspace = 30
         self._is_segmentation = False
         self.color_map = 'gray'
+
+        self.fiducials_data = []
 
         self.initUI()
 
@@ -266,6 +269,27 @@ class NRRD2ADFConverterGUI(QWidget):
 
         layout.addLayout(lut_layout, 5, 0)
 
+        # Fidui Layout
+        layout.setVerticalSpacing(self.sub_layout_vspace)
+        fiducial_layout = QGridLayout()
+
+        self.group_label = QLabel("STEP 2D - FIDUCIALS (OPTIONAL)")
+        self.group_label.setAlignment(Qt.AlignCenter)
+        fiducial_layout.addWidget(self.group_label, 0, 0, 1, 4)
+
+        self.fiducial_filepath = QLineEdit("", self)
+        fiducial_layout.addWidget(self.fiducial_filepath, 1, 0, 1, 3)
+
+        self.select_fiducial_filepath = QPushButton("Select Fiducial File", self)
+        self.select_fiducial_filepath.clicked.connect(self.select_fiducial_cb)
+        fiducial_layout.addWidget(self.select_fiducial_filepath, 1, 3)
+
+        self.load_fiducial_button = QPushButton("Load Fiducials", self)
+        self.load_fiducial_button.clicked.connect(self.load_fiducial_cb)
+        self.load_fiducial_button.setEnabled(False)
+        fiducial_layout.addWidget(self.load_fiducial_button, 3, 0, 1, 4)
+
+        layout.addLayout(fiducial_layout, 6, 0)
 
         # ADF Layout
         layout.setVerticalSpacing(self.sub_layout_vspace)
@@ -290,7 +314,7 @@ class NRRD2ADFConverterGUI(QWidget):
         self.save_adf_button.setEnabled(False)
         adf_layout.addWidget(self.save_adf_button, 2, 0, 1, 4)
 
-        layout.addLayout(adf_layout, 6, 0)
+        layout.addLayout(adf_layout, 7, 0)
         
         # Finalize
         self.setLayout(layout)
@@ -442,6 +466,44 @@ class NRRD2ADFConverterGUI(QWidget):
     def save_slices_as_pngs_cb(self):
         save_volume_data_as_slices(self.nrrd_data, self.slices_path.text(), self.slices_prefix.text(), self.color_map)
 
+    def select_fiducial_cb(self):
+        options = QFileDialog.Options()
+        fiducial_filepath, _ = QFileDialog.getOpenFileName(self, "Open Fiducial File", "", "JSON Files (*.json)", options=options)
+        
+        if fiducial_filepath:
+            self.fiducial_filepath.setText(fiducial_filepath)
+            self.load_fiducial_button.setEnabled(True)
+
+    def load_fiducial_cb(self):
+        if self.fiducial_filepath.text():
+            with open(self.fiducial_filepath.text(), 'r') as f:
+                fiducials_json = json.load(f)["markups"][0]
+
+                coordinate_system = fiducials_json["coordinateSystem"]
+                coordinate_units = 1.0 
+                if fiducials_json["coordinateUnits"] == "mm":
+                    coordinate_units = 0.001
+
+                for fiducial in fiducials_json["controlPoints"]:
+                    fiducial_name = fiducial["label"].replace("-", "_") # ADF does not allow "-" , so replace with underscores
+                    if (coordinate_system == "LPS"):
+                        self.fiducials_data.append({
+                            "name": fiducial_name,
+                            "position": [fiducial["position"][0] * coordinate_units, fiducial["position"][1] * coordinate_units, fiducial["position"][2] * coordinate_units],
+                            "orientation": fiducial["orientation"]
+                        })
+
+                    elif (coordinate_system == "RAS"):
+                        self.fiducials_data.append({
+                            "name": fiducial_name,
+                            "position": [-fiducial["position"][0] * coordinate_units, -fiducial["position"][1] * coordinate_units, fiducial["position"][2] * coordinate_units],
+                            "orientation": fiducial["orientation"]
+                        })
+                
+                print(f"INFO! Loaded {len(self.fiducials_data)} fiducials from {self.fiducial_filepath.text()}")
+        else:
+            print("No fiducial file path provided.")
+            
     def save_adf_cb(self):
         if self.override_geometric.isChecked():
             nrrd_geometric_data = self._get_nrrd_geometric_data_from_layout()
@@ -482,6 +544,9 @@ class NRRD2ADFConverterGUI(QWidget):
             shader_to_dir = os.path.dirname(self.adf_filepath.text()) + '/shaders'
             copy_shaders(shader_from_dir, shader_to_dir)
             adf_data.set_volume_shader_data('shaders', 'shader.vs', 'shader.fs')
+
+        if len(self.fiducials_data) > 0:
+            adf_data.set_fiducials_data(self.fiducials_data)    
 
         adf_data.save(self.adf_filepath.text())
 

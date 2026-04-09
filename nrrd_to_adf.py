@@ -127,6 +127,8 @@ class ADFData:
             "mass": 0.0
         }
 
+        self.fiducials_data = []
+
     def set_volume_name_from_nrrd_filepath(self, nrrd_filepath):
         self.volume_data["volume filepath"] = nrrd_filepath
         self.set_volume_name(os.path.basename(nrrd_filepath).split('.')[0])
@@ -168,6 +170,20 @@ class ADFData:
     def set_parent_body_geometric_attributes(self, position, orientation):
         self.set_location_attributes(self.parent_body_data, position, orientation)
 
+    def set_fiducials_data(self, fiducials_data_list):
+        for data in fiducials_data_list:
+            # Initialize fiducial data with default values, then set name and location attributes
+            fiducial_data = {
+                "name": data['name'],
+                    "location": {
+                    "position": {"x": data['position'][0], "y": data['position'][1], "z": data['position'][2]},
+                    "orientation": {"r": 0.0, "p": 0.0, "y": 0.0}
+                },
+                "scale": 1.0,
+                "mass": 0.0
+            }
+            self.fiducials_data.append(fiducial_data)
+
     def _coalesce_adf_data(self):
         coalesced_data = OrderedDict()
         coalesced_data = self.meta_data
@@ -179,6 +195,14 @@ class ADFData:
             body_identifier = "BODY " + self.parent_body_data["name"]
             coalesced_data["bodies"].append(body_identifier)
             coalesced_data[body_identifier] = self.parent_body_data
+
+        if len(self.fiducials_data) > 0:
+            for fiducial in self.fiducials_data:
+                fiducial_identifier = "BODY " + fiducial["name"]
+                # check if there is existing rigidbody with the same name
+                if (fiducial_identifier not in coalesced_data["bodies"]):
+                    coalesced_data["bodies"].append(fiducial_identifier)
+                coalesced_data[fiducial_identifier] = fiducial
 
         return coalesced_data
 
