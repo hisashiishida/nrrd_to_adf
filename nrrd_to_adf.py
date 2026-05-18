@@ -52,6 +52,7 @@ import numpy as np
 from seg_nrrd_to_pngs import SegNrrdCoalescer
 from volume_data_to_slices import *
 import re
+import json
 
 class NrrdGeometricData:
     def __init__(self):
@@ -127,6 +128,8 @@ class ADFData:
             "mass": 0.0
         }
 
+        self.fiducials_data = []
+
     def set_volume_name_from_nrrd_filepath(self, nrrd_filepath):
         self.volume_data["volume filepath"] = nrrd_filepath
         self.set_volume_name(os.path.basename(nrrd_filepath).split('.')[0])
@@ -168,6 +171,20 @@ class ADFData:
     def set_parent_body_geometric_attributes(self, position, orientation):
         self.set_location_attributes(self.parent_body_data, position, orientation)
 
+    def set_fiducials_data(self, fiducials_data_list):
+        for data in fiducials_data_list:
+            # Initialize fiducial data with default values, then set name and location attributes
+            fiducial_data = {
+                "name": data['name'],
+                    "location": {
+                    "position": {"x": data['position'][0], "y": data['position'][1], "z": data['position'][2]},
+                    "orientation": {"r": 0.0, "p": 0.0, "y": 0.0}
+                },
+                "scale": 1.0,
+                "mass": 0.0
+            }
+            self.fiducials_data.append(fiducial_data)
+
     def _coalesce_adf_data(self):
         coalesced_data = OrderedDict()
         coalesced_data = self.meta_data
@@ -179,6 +196,14 @@ class ADFData:
             body_identifier = "BODY " + self.parent_body_data["name"]
             coalesced_data["bodies"].append(body_identifier)
             coalesced_data[body_identifier] = self.parent_body_data
+
+        if len(self.fiducials_data) > 0:
+            for fiducial in self.fiducials_data:
+                fiducial_identifier = "BODY " + fiducial["name"]
+                # check if there is existing rigidbody with the same name
+                if (fiducial_identifier not in coalesced_data["bodies"]):
+                    coalesced_data["bodies"].append(fiducial_identifier)
+                coalesced_data[fiducial_identifier] = fiducial
 
         return coalesced_data
 
@@ -231,18 +256,49 @@ def is_segmentation_file(filename: str):
     return filename.endswith('.seg.nrrd')
 
 
+def load_fiducials(fiducial_filepath):
+    fiducials_data = []
+    with open(fiducial_filepath, 'r') as f:
+        fiducials_json = json.load(f)["markups"][0]
+
+        coordinate_system = fiducials_json["coordinateSystem"]
+        coordinate_units = 1.0
+        if fiducials_json["coordinateUnits"] == "mm":
+            coordinate_units = 0.001
+
+        for fiducial in fiducials_json["controlPoints"]:
+            fiducial_name = fiducial["label"].replace("-", "_")  # ADF does not allow "-" , so replace with underscores
+            if (coordinate_system == "LPS"):
+                fiducials_data.append({
+                    "name": fiducial_name,
+                    "position": [fiducial["position"][0] * coordinate_units, fiducial["position"][1] * coordinate_units, fiducial["position"][2] * coordinate_units],
+                    "orientation": fiducial["orientation"]
+                })
+            elif (coordinate_system == "RAS"):
+                fiducials_data.append({
+                    "name": fiducial_name,
+                    "position": [-fiducial["position"][0] * coordinate_units, -fiducial["position"][1] * coordinate_units, fiducial["position"][2] * coordinate_units],
+                    "orientation": fiducial["orientation"]
+                })
+
+    print(f"INFO! Loaded {len(fiducials_data)} fiducials from {fiducial_filepath}")
+    return fiducials_data
+
+
 def copy_shaders(from_path, to_path: str):
     copy_tree(from_path, to_path)
 
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument('-n', action='store', dest='nrrd_file', help='Specify NRRD filepath', required = True)
-    parser.add_argument('-a', action='store', dest='adf_filepath', help='Specify ADF filepath', required = True)
-    parser.add_argument('-p', action='store', dest='slices_prefix', help='Specify slices prefix', default='slice0')
-    parser.add_argument('-c', action='store', dest='color_lut', help='Set Color LUT', required=False)
-    parser.add_argument('-s', action='store', dest="save_slices", help="Save slices. Can choose not to save slices again if they are already saved", default=True)
+    parser.add_argument('-n', '--nrrd_file', action='store', dest='nrrd_file', help='Specify NRRD filepath', required = True)
+    parser.add_argument('-a', '--adf_filepath', action='store', dest='adf_filepath', help='Specify ADF filepath', required = True)
+    parser.add_argument('-p', '--slices_prefix', action='store', dest='slices_prefix', help='Specify slices prefix', default='slice0')
+    parser.add_argument('-c', '--color_lut', action='store', dest='color_lut', help='Set Color LUT', required=False)
+    parser.add_argument('-s', '--save_slices', action='store', dest="save_slices", help="Save slices. Can choose not to save slices again if they are already saved", default=True)
     parser.add_argument('--slices_path', action='store', dest="slices_path", help="Specify path for slices, defaults to the location of ADF filepath", default=None)
+    parser.add_argument('-f', '--fiducial_filepath', action='store', dest='fiducial_filepath', help='Specify fiducial JSON filepath (from 3D Slicer)', required=False, default=None)
+    parser.add_argument('-v', '--volume_name', action='store', dest='volume_name', help='Override volume name (defaults to NRRD filename)', required=False, default=None)
     
     parsed_args = parser.parse_args()
     print('Specified Arguments')
@@ -271,7 +327,11 @@ def main():
                             parsed_args.nrrd_file,
                             rel_slices_path,
                             parsed_args.slices_prefix)
-    
+
+    if parsed_args.volume_name:
+        adf_data.set_volume_name(parsed_args.volume_name)
+        adf_data.set_parent_body_name_attribute(adf_data.volume_data["name"] + "_Anatomical_Origin")
+
     if parsed_args.color_lut:
         print("INFO! Setting Color LUT to:", parsed_args.color_lut)
         rel_lut_path = os.path.relpath(parsed_args.color_lut, os.path.dirname(parsed_args.adf_filepath))
@@ -301,7 +361,16 @@ def main():
     shader_to_dir = os.path.dirname(parsed_args.adf_filepath) + '/shaders'
     copy_shaders(shader_from_dir, shader_to_dir)
     adf_data.set_volume_shader_data('shaders', 'shader.vs', 'shader.fs')
-            
+
+    ### Load Fiducials if provided
+    if parsed_args.fiducial_filepath:
+        if os.path.exists(parsed_args.fiducial_filepath):
+            fiducials_data = load_fiducials(parsed_args.fiducial_filepath)
+            if len(fiducials_data) > 0:
+                adf_data.set_fiducials_data(fiducials_data)
+        else:
+            print(f"WARN! Fiducial filepath does not exist: {parsed_args.fiducial_filepath}")
+
     ### Save ADF Data as ADF File
     adf_data.save(parsed_args.adf_filepath)
 

@@ -3,3 +3,6 @@
 .pycache/
 __pycache__/
 *.pyc
+data/
+.vscode/
+.claude
