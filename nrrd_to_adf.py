@@ -47,7 +47,8 @@ from argparse import ArgumentParser
 import nrrd
 import yaml
 import os
-from distutils.dir_util import copy_tree
+import shutil
+from pathlib import Path
 import numpy as np
 from seg_nrrd_to_pngs import SegNrrdCoalescer
 from volume_data_to_slices import *
@@ -286,7 +287,11 @@ def load_fiducials(fiducial_filepath):
 
 
 def copy_shaders(from_path, to_path: str):
-    copy_tree(from_path, to_path)
+    shutil.copytree(
+        Path(from_path),
+        Path(to_path),
+        dirs_exist_ok=True  # allows copying into existing directory
+    )
 
 
 def main():
