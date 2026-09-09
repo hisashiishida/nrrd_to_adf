@@ -66,36 +66,122 @@ class NrrdGeometricData:
         self.coordinate_representation = ""
         self.units_scale = 0.001 # NRRD is commonly in mm, convert to SI
 
-    def load(self, nrrd_hdr):
+        # Transform applied to the raw (i, j, k) voxel array so that every volume
+        # ends up in the same anatomical voxel layout regardless of how Slicer
+        # stored it (see _canonicalize / apply_canonical_orientation).
+        self.canonical_axes_order = (0, 1, 2) # np.transpose order for the data array
+        self.canonical_flip_axes = []         # data axes to np.flip after transposing
+
+    def load(self, nrrd_hdr, canonical_orientation=True):
         space_directions = nrrd_hdr['space directions']
         if space_directions.shape[0] == 4: # Segmented NRRD, take the last three rows
             space_directions = space_directions[1:4, :]
-        self.resolution = np.linalg.norm(space_directions, axis=1)
-        
+        space_directions = np.array(space_directions, dtype=float)
+
         sizes = nrrd_hdr['sizes']
         if sizes.shape[0] == 4: # Seg NRRD, take the last three values
             sizes = sizes[1:4]
+        sizes = np.array(sizes)
 
-        self.sizes = sizes
-        self.dimensions = self.resolution * self.sizes
         self.coordinate_representation = nrrd_hdr['space'] # Usually LPS or RAS
-
         if self.coordinate_representation.lower() != 'left-posterior-superior':
             print("INFO! NRRD NOT USING LPS CONVENTION")
-        
+
+        origin = np.array(nrrd_hdr['space origin'], dtype=float)
+
         rotation_offset = Rotation.from_euler('xyz', [0., 0., 0.], degrees=True)
-        if self.coordinate_representation.lower() == 'right-anterior-superior':
-            # Perform 180 degree rotation
-            rotation_offset = Rotation.from_euler('xyz', [0., 0., 180.], degrees=True)
-        # Add others
-        
+        if canonical_orientation:
+            # Reorient the array (and its geometry) to a fixed anatomical voxel
+            # layout. After this, space_directions is ~diag(+,-,-) * spacing for
+            # EVERY input, so the SVD below yields the same orientation for all
+            # volumes and the exported PNG stack is always consistent.
+            space_directions, sizes, origin = self._canonicalize(
+                space_directions, sizes, origin, self.coordinate_representation)
+        else:
+            # Legacy behaviour: no array reorientation, partial RAS handling only.
+            if self.coordinate_representation.lower() == 'right-anterior-superior':
+                # Perform 180 degree rotation
+                rotation_offset = Rotation.from_euler('xyz', [0., 0., 180.], degrees=True)
+            # Add others
+
+        self.resolution = np.linalg.norm(space_directions, axis=1)
+        self.sizes = sizes
+        self.dimensions = self.resolution * self.sizes
+
         U, _, Vt = np.linalg.svd(space_directions.T)
         self.orientation_mat = rotation_offset.as_matrix() @ (U @ Vt)
         self.orientation_rpy = Rotation.from_matrix(self.orientation_mat).as_euler('xyz', degrees=False) #lower case 'xyz' is extrinsic, uppercase 'XYZ' is instrinsic
-        
-        self.origin = nrrd_hdr['space origin']
-        self.origin = rotation_offset.as_matrix() @ self.origin
-    
+
+        self.origin = rotation_offset.as_matrix() @ origin
+
+    def _canonicalize(self, space_directions, sizes, origin, space):
+        """Return (space_directions, sizes, origin) reoriented so the voxel axes
+        map to  i -> Left, j -> Anterior, k -> Inferior  (in LPS world space).
+
+        This is the layout the AMBF multiview plugin and drill_location_in_volume
+        already assume. As a side effect, records self.canonical_axes_order and
+        self.canonical_flip_axes so the same permutation/flip can be applied to
+        the voxel data before it is written out as PNG slices.
+        """
+        space = space.lower()
+        if space in ('right-anterior-superior', 'ras'):
+            # RAS -> LPS: negate the world X and Y components.
+            ras_to_lps = np.array([-1.0, -1.0, 1.0])
+            space_directions = space_directions * ras_to_lps
+            origin = origin * ras_to_lps
+        elif space not in ('left-posterior-superior', 'lps'):
+            print(f"WARN! Unhandled NRRD space '{space}'. Assuming axes are already LPS-like.")
+
+        # For each voxel axis, which world axis it mostly moves along, and the sign.
+        perm = np.argmax(np.abs(space_directions), axis=1)
+        signs = np.sign(space_directions[np.arange(3), perm])
+        if sorted(int(p) for p in perm) != [0, 1, 2]:
+            print(f"WARN! 'space directions' axis mapping {perm.tolist()} is not a clean "
+                  "permutation (oblique volume). Slices may still be inconsistent; "
+                  "consider resampling to an axis-aligned grid in 3D Slicer.")
+
+        # 1) Transpose so that voxel axis n aligns with world axis n.
+        axes_order = tuple(int(a) for a in np.argsort(perm))
+        space_directions = space_directions[list(axes_order), :].astype(float)
+        sizes = np.array(sizes)[list(axes_order)]
+        signs = signs[list(axes_order)]
+
+        # 2) Flip axes so the world-space signs become (+L, -P == Anterior,
+        #    -S == Inferior), i.e. the "i=Left, j=Anterior, k=Inferior" layout.
+        target_signs = np.array([1.0, -1.0, -1.0])
+        flip_axes = [n for n in range(3) if signs[n] != target_signs[n]]
+        for n in flip_axes:
+            # New voxel 0 along axis n now sits at the opposite physical corner.
+            # Shift by the full extent (sizes[n], not sizes[n]-1) so that the
+            # downstream "origin + R @ (dimensions / 2)" volume-centre formula in
+            # set_volume_geometric_attributes lands the box in the exact same
+            # world location it would occupy without the flip.
+            origin = origin + space_directions[n] * int(sizes[n])
+            space_directions[n] = -space_directions[n]
+
+        self.canonical_axes_order = axes_order
+        self.canonical_flip_axes = flip_axes
+        print(f"INFO! Canonical reorientation: transpose voxel axes {axes_order}, "
+              f"flip axes {flip_axes}  (-> i=Left, j=Anterior, k=Inferior)")
+
+        return space_directions, sizes, origin
+
+    def apply_canonical_orientation(self, data):
+        """Apply the permutation/flip found in load() to a voxel array.
+
+        Handles a raw (i, j, k) array or a coalesced (i, j, k, 4) RGBA array.
+        No-op when load() found the volume already canonical (e.g. PL04).
+        """
+        order = self.canonical_axes_order
+        if order == (0, 1, 2) and not self.canonical_flip_axes:
+            return data
+        if data.ndim == 4:
+            order = order + (3,)
+        data = np.transpose(data, order)
+        for n in self.canonical_flip_axes:
+            data = np.flip(data, axis=n)
+        return np.ascontiguousarray(data)
+
 
 class ADFData:
     def __init__(self):
@@ -304,7 +390,8 @@ def main():
     parser.add_argument('--slices_path', action='store', dest="slices_path", help="Specify path for slices, defaults to the location of ADF filepath", default=None)
     parser.add_argument('-f', '--fiducial_filepath', action='store', dest='fiducial_filepath', help='Specify fiducial JSON filepath (from 3D Slicer)', required=False, default=None)
     parser.add_argument('-v', '--volume_name', action='store', dest='volume_name', help='Override volume name (defaults to NRRD filename)', required=False, default=None)
-    
+    parser.add_argument('--canonical_orientation', action='store', dest='canonical_orientation', help="Reorient the volume to a fixed anatomical voxel layout (i=Left, j=Anterior, k=Inferior) so slices are consistent across NRRDs. Set to False for legacy behaviour.", default=True)
+
     parsed_args = parser.parse_args()
     print('Specified Arguments')
     print(parsed_args)
@@ -313,8 +400,10 @@ def main():
 
     _is_segmentation = is_segmentation_file(parsed_args.nrrd_file)
 
+    canonical_orientation = parsed_args.canonical_orientation in [True, 'True', 'true', 'TRUE', 1, '1']
+
     nrrd_geometric_data = NrrdGeometricData()
-    nrrd_geometric_data.load(nrrd_hdr)
+    nrrd_geometric_data.load(nrrd_hdr, canonical_orientation=canonical_orientation)
 
     save_slices = False
     if parsed_args.save_slices in ['True', 'true', 'TRUE', 1, '1']:
@@ -386,6 +475,10 @@ def main():
             nrrd_coalescer = SegNrrdCoalescer()
             nrrd_coalescer.parse_nrrd_data(nrrd_hdr, nrrd_data)
             nrrd_data = nrrd_coalescer.get_coalesced_data()
+
+        # Reorient the voxel array to the same anatomical layout used for the ADF
+        # geometry, so the PNG stack is consistent regardless of the source NRRD.
+        nrrd_data = nrrd_geometric_data.apply_canonical_orientation(nrrd_data)
 
         save_volume_data_as_slices(nrrd_data, parsed_args.slices_path, parsed_args.slices_prefix, color_map)
 
