@@ -132,13 +132,39 @@ class NrrdGeometricData:
         elif space not in ('left-posterior-superior', 'lps'):
             print(f"WARN! Unhandled NRRD space '{space}'. Assuming axes are already LPS-like.")
 
-        # For each voxel axis, which world axis it mostly moves along, and the sign.
+        # For each voxel axis, which world axis it mostly runs along, and the sign.
         perm = np.argmax(np.abs(space_directions), axis=1)
+
+        # Canonical alignment is a pure reindexing (axis permutation + flips). It
+        # is only valid when every voxel axis is (nearly) parallel to an
+        # anatomical axis, i.e. space_directions is a scaled signed permutation
+        # matrix. Fail loudly otherwise instead of silently mis-orienting.
+        MAX_AXIS_TILT_DEG = 1.0
+        unit_rows = space_directions / np.linalg.norm(space_directions, axis=1, keepdims=True)
+        tilt_deg = np.degrees(np.arccos(np.clip(np.abs(unit_rows[np.arange(3), perm]), 0.0, 1.0)))
+        is_permutation = sorted(int(p) for p in perm) == [0, 1, 2]
+
+        if not is_permutation or tilt_deg.max() > MAX_AXIS_TILT_DEG:
+            msg = (
+                "ERROR! Volume is NOT axis-aligned to the patient anatomy "
+                f"(voxel-axis -> world-axis map = {perm.tolist()}, "
+                f"max off-axis tilt = {tilt_deg.max():.3f} deg, "
+                f"tolerance = {MAX_AXIS_TILT_DEG} deg).\n"
+                "       Canonical alignment only supports reindexing (axis "
+                "permutation + flips) of axis-aligned volumes.\n"
+                "       Resampling an oblique grid to an axis-aligned grid has "
+                "NOT been implemented or tested in this script.\n"
+                "       Fix: resample the volume to an axis-aligned grid in 3D "
+                "Slicer first, OR re-run this script with "
+                "'--canonical_orientation False' to keep the source volume's "
+                "orientation."
+            )
+            print(msg)
+            raise ValueError("Volume is not axis-aligned; canonical alignment "
+                             "aborted. Re-run with --canonical_orientation False "
+                             "or resample the volume to an axis-aligned grid.")
+
         signs = np.sign(space_directions[np.arange(3), perm])
-        if sorted(int(p) for p in perm) != [0, 1, 2]:
-            print(f"WARN! 'space directions' axis mapping {perm.tolist()} is not a clean "
-                  "permutation (oblique volume). Slices may still be inconsistent; "
-                  "consider resampling to an axis-aligned grid in 3D Slicer.")
 
         # 1) Transpose so that voxel axis n aligns with world axis n.
         axes_order = tuple(int(a) for a in np.argsort(perm))
