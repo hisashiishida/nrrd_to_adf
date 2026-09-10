@@ -1,7 +1,3 @@
-# CONVERT NRRD AND SEGMENTATION NRRD FILES TO ADF FILES
-
-Tools to convert NRRD volumes to ADF and back for AMBF simulations.
-
 <!--toc:start-->
 - [CONVERT NRRD AND SEGMENTATION NRRD FILES TO ADF FILES](#convert-nrrd-and-segmentation-nrrd-files-to-adf-files)
   - [Functionality 1: nrrd to ADF conversion](#functionality-1-nrrd-to-adf-conversion)
@@ -9,6 +5,11 @@ Tools to convert NRRD volumes to ADF and back for AMBF simulations.
     - [GUI:](#gui)
   - [Functionality 2: Update nrrd with set of images](#functionality-2-update-nrrd-with-set-of-images)
 <!--toc:end-->
+
+# CONVERT NRRD AND SEGMENTATION NRRD FILES TO ADF FILES
+
+Tools to convert NRRD volumes to ADF and back for AMBF simulations.
+
 
 
 
@@ -68,6 +69,7 @@ python3 nrrd_to_adf_gui.py
 ```
 <p style="text-align: center"><img src="media/gui.png" alt="GUI" width="500"/></p>
 
+Test volumes can be found [here](example_assets/phantom_volumes/)
 
 
 ## Functionality 2: Update nrrd with set of images 
