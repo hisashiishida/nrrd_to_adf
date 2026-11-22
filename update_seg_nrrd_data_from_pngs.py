@@ -48,8 +48,32 @@ from seg_nrrd_to_pngs import SegNrrdCoalescer
 from nrrd_to_adf import NrrdGeometricData
 
 
-def natural_sort_key(s):
-    return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', s)]
+def slice_files_in_order(folder, prefix):
+    """
+    Return the `<prefix><index>.png` files in `folder`, ordered by index.
+
+    Accepts both zero-padded (plane00009.png) and unpadded (plane009.png)
+    indices. Raises if an index appears twice (e.g. a folder mixing both
+    naming styles) or if indices are missing, since either would misplace
+    slices in the rebuilt volume.
+    """
+    rx = re.compile(re.escape(prefix) + r'(\d+)\.png$')
+    indexed = {}
+    for f in glob.glob(os.path.join(folder, prefix + '*.png')):
+        m = rx.match(os.path.basename(f))
+        if not m:
+            continue
+        idx = int(m.group(1))
+        if idx in indexed:
+            raise ValueError("Slice index %d appears twice: %s and %s (mixed padded/unpadded names?)"
+                             % (idx, os.path.basename(indexed[idx]), os.path.basename(f)))
+        indexed[idx] = f
+    if not indexed:
+        return []
+    missing = sorted(set(range(max(indexed) + 1)) - set(indexed))
+    if missing:
+        raise ValueError("Missing slice indices %s in %s" % (missing[:10], folder))
+    return [indexed[i] for i in sorted(indexed)]
 
 
 def load_pngs_as_volume(folder, prefix):
@@ -60,7 +84,7 @@ def load_pngs_as_volume(folder, prefix):
     rotating each slice with k=-1.
     """
     pattern = os.path.join(folder, prefix + '*.png')
-    files = sorted(glob.glob(pattern), key=natural_sort_key)
+    files = slice_files_in_order(folder, prefix)
     if not files:
         raise FileNotFoundError("No PNGs found matching pattern: " + pattern)
 

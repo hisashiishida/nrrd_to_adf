@@ -61,8 +61,13 @@ def save_volume_data_as_slices(data, folder, prefix, colormap):
             if not os.path.exists(folder):
                 os.makedirs(folder)
             if data is not None:
+                # Zero-pad the slice index to the digits of the last index so the
+                # names sort correctly (e.g. slices00009 ... slices00186). AMBF's
+                # loader (chai3d cMultiImage::loadFromFiles) accepts padded and
+                # unpadded indices up to the digit count of the image count.
+                width = len(str(data.shape[2] - 1))
                 for i in range(data.shape[2]):
-                    im_name = folder + '/' + prefix + str(i) + '.png'
+                    im_name = folder + '/' + prefix + str(i).zfill(width) + '.png'
                     im_data = np.rot90(data[:, :, i], k=1) # For AMBF we need this CCW 90 degree rotation
                     # print("Before", im_data.shape)
                     im_data = np.ascontiguousarray(im_data) # To avoid the bug in imsave in matplotlib imsave (https://stackoverflow.com/questions/78269316/matplotlib-imsave-error-ndarray-is-not-c-contiguous-but-it-is)
