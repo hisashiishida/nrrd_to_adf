@@ -208,6 +208,23 @@ class NrrdGeometricData:
             data = np.flip(data, axis=n)
         return np.ascontiguousarray(data)
 
+    def undo_canonical_orientation(self, data):
+        """Inverse of apply_canonical_orientation: map a canonical-layout array
+        (e.g. one rebuilt from the exported PNG slices) back to the source
+        NRRD's native (i, j, k) voxel order. Handles (i, j, k) and (i, j, k, C).
+        """
+        order = self.canonical_axes_order
+        if order == (0, 1, 2) and not self.canonical_flip_axes:
+            return data
+        # Flips were applied after the transpose, so undo them first.
+        for n in self.canonical_flip_axes:
+            data = np.flip(data, axis=n)
+        inverse_order = tuple(int(a) for a in np.argsort(order))
+        if data.ndim == 4:
+            inverse_order = inverse_order + (3,)
+        data = np.transpose(data, inverse_order)
+        return np.ascontiguousarray(data)
+
 
 class ADFData:
     def __init__(self):

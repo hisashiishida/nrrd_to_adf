@@ -45,6 +45,7 @@ import matplotlib.image as mpimg
 from argparse import ArgumentParser
 
 from seg_nrrd_to_pngs import SegNrrdCoalescer
+from nrrd_to_adf import NrrdGeometricData
 
 
 def natural_sort_key(s):
@@ -161,6 +162,12 @@ def main():
                         help='Output .seg.nrrd file')
     parser.add_argument('--alpha-threshold', dest='alpha_threshold', type=float, default=0.05,
                         help='Voxels with alpha (or max RGB) below this are background (default: 0.05)')
+    parser.add_argument('--canonical_orientation', dest='canonical_orientation', default=True,
+                        help='Must match the value used when the slices were exported with '
+                             'nrrd_to_adf.py (default: True). The slices are then in the canonical '
+                             '(i=Left, j=Anterior, k=Inferior) layout and are reoriented back to the '
+                             'source NRRD axis order before writing. Set to False for slices exported '
+                             'with --canonical_orientation False.')
     parsed_args = parser.parse_args()
     print('Specified Arguments')
     print(parsed_args)
@@ -178,11 +185,23 @@ def main():
     volume = load_pngs_as_volume(parsed_args.slices_path, parsed_args.slices_prefix)
     print("INFO! Loaded PNG volume shape:", volume.shape)
 
+    # nrrd_to_adf.py reorients the voxel array to a canonical anatomical layout
+    # before writing slices. Recompute that same transform from the header and
+    # undo it so the slices line up with the source NRRD's native axis order.
+    canonical_orientation = parsed_args.canonical_orientation in [True, 'True', 'true', 'TRUE', 1, '1']
+    geometric_data = NrrdGeometricData()
+    geometric_data.load(nrrd_hdr, canonical_orientation=canonical_orientation)
+    if canonical_orientation:
+        volume = geometric_data.undo_canonical_orientation(volume)
+        print("INFO! Volume shape after undoing canonical orientation:", volume.shape)
+
     expected_xyz = nrrd_data.shape if nrrd_data.ndim == 3 else nrrd_data.shape[1:]
     if tuple(volume.shape[:3]) != tuple(expected_xyz):
-        print("WARN! PNG volume shape", volume.shape[:3],
-              "does not match NRRD spatial shape", expected_xyz,
-              "- the script will still try to write but axes may be misaligned.")
+        raise ValueError(
+            f"PNG volume shape {tuple(volume.shape[:3])} does not match NRRD spatial shape "
+            f"{tuple(expected_xyz)}. Check that -n is the .seg.nrrd the slices were exported "
+            "from and that --canonical_orientation matches the export setting."
+        )
 
     print("INFO! Mapping PNG colors back to segment labels...")
     labelmap = colors_to_labels(volume, segments_infos,
