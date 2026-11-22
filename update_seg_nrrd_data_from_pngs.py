@@ -91,24 +91,39 @@ def load_pngs_as_volume(folder, prefix):
     return volume
 
 
-def colors_to_labels(volume, segments_infos, alpha_threshold=0.05):
-    """
-    Map an (X, Y, Z, C) RGB(A) volume back into an (X, Y, Z) labelmap by
-    matching every voxel's color to the nearest segment color recorded in
-    the NRRD header. Voxels with low alpha (or pure black for RGB inputs)
-    are treated as background and assigned label 0.
-    """
-    seg_colors = np.array([s.color.as_list()[:3] for s in segments_infos], dtype=np.float32)
-    seg_labels = np.array([s.label for s in segments_infos], dtype=np.int32)
+BACKGROUND = -1
 
+
+def colors_to_segments(volume, segments_infos, alpha_threshold=0.05):
+    """
+    Map an (X, Y, Z, C) RGB(A) volume back into an (X, Y, Z) map of segment
+    positions (indices into `segments_infos`), with BACKGROUND (-1) for empty
+    voxels.
+
+    This classifies by *segment*, not by label value: in Slicer .seg.nrrd
+    files with separate layers, different segments can share the same label
+    value (e.g. box and stone both LabelValue=1 on layers 0 and 1), so a
+    label value alone cannot tell them apart.
+    """
     if volume.ndim == 3:
-        # Grayscale slice stack: assume pixel intensity already encodes the
-        # label value (after the 0..1 scaling done by mpimg.imread).
+        # Grayscale slice stack: pixel intensity encodes the label value (after
+        # the 0..1 scaling done by mpimg.imread). Only unambiguous if every
+        # segment has a distinct label value.
+        labels = [s.label for s in segments_infos]
+        if len(set(labels)) != len(labels):
+            raise ValueError(
+                "Grayscale slices cannot be mapped back to segments because several "
+                f"segments share a label value ({labels}). Export RGBA slices instead."
+            )
         intensity = (volume * 255.0).round().astype(np.int32)
-        return intensity.astype(np.uint8)
+        segmap = np.full(intensity.shape, BACKGROUND, dtype=np.int32)
+        for pos, seg in enumerate(segments_infos):
+            segmap[intensity == seg.label] = pos
+        return segmap
 
     h, w, d = volume.shape[:3]
     rgb = volume[..., :3].astype(np.float32)
+    seg_colors = np.array([s.color.as_list()[:3] for s in segments_infos], dtype=np.float32)
 
     if volume.shape[-1] == 4:
         is_bg = volume[..., 3] < alpha_threshold
@@ -118,32 +133,36 @@ def colors_to_labels(volume, segments_infos, alpha_threshold=0.05):
     flat_rgb = rgb.reshape(-1, 3)
     # Squared distance from every voxel to every segment color: (N, K)
     dists = np.sum((flat_rgb[:, None, :] - seg_colors[None, :, :]) ** 2, axis=-1)
-    nearest = np.argmin(dists, axis=-1)
-    labelmap = seg_labels[nearest].reshape(h, w, d)
-    labelmap[is_bg] = 0
-    return labelmap.astype(np.uint8)
+    segmap = np.argmin(dists, axis=-1).astype(np.int32).reshape(h, w, d)
+    segmap[is_bg] = BACKGROUND
+    return segmap
 
 
-def labelmap_to_nrrd_data(labelmap, original_data, segments_infos):
+def segments_to_nrrd_data(segmap, original_data, segments_infos):
     """
-    Write `labelmap` back into the layout the original NRRD used. Slicer
-    .seg.nrrd files come in two flavors:
+    Write a segment-position map back into the layout the original NRRD used.
+    Slicer .seg.nrrd files come in two flavors:
       - 3D (collapsed labelmaps): a single (X, Y, Z) array of label values
       - 4D (separate layers): (L, X, Y, Z) where each layer L holds one or
         more non-overlapping segments, encoded by their label values
+    Each segment's voxels are written only into its own layer, with its own
+    label value.
     """
     data_dims = original_data.ndim
-    if data_dims == 3:
-        return labelmap.astype(original_data.dtype)
-    if data_dims == 4:
-        new_data = np.zeros_like(original_data)
-        for seg in segments_infos:
-            if seg.layer is None or seg.label is None:
+    if data_dims not in (3, 4):
+        raise ValueError("Unsupported NRRD data dimensionality: " + str(data_dims))
+    new_data = np.zeros_like(original_data)
+    for pos, seg in enumerate(segments_infos):
+        if seg.label is None:
+            continue
+        mask = (segmap == pos)
+        if data_dims == 3:
+            new_data[mask] = seg.label
+        else:
+            if seg.layer is None:
                 continue
-            mask = (labelmap == seg.label)
             new_data[seg.layer][mask] = seg.label
-        return new_data
-    raise ValueError("Unsupported NRRD data dimensionality: " + str(data_dims))
+    return new_data
 
 
 def main():
@@ -203,12 +222,12 @@ def main():
             "from and that --canonical_orientation matches the export setting."
         )
 
-    print("INFO! Mapping PNG colors back to segment labels...")
-    labelmap = colors_to_labels(volume, segments_infos,
+    print("INFO! Mapping PNG colors back to segments...")
+    segmap = colors_to_segments(volume, segments_infos,
                                 alpha_threshold=parsed_args.alpha_threshold)
 
-    print("INFO! Writing labelmap into NRRD layout...")
-    updated = labelmap_to_nrrd_data(labelmap, nrrd_data, segments_infos)
+    print("INFO! Writing segments into NRRD layout...")
+    updated = segments_to_nrrd_data(segmap, nrrd_data, segments_infos)
 
     print("INFO! Writing updated NRRD to:", parsed_args.output_file)
     nrrd.write(parsed_args.output_file, updated, nrrd_hdr)
